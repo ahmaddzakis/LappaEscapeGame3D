@@ -7,8 +7,9 @@ using LappaEscape.Core;
 namespace LappaEscape.Player
 {
     /// <summary>
-    /// Kontroler pergerakan karakter petualang Lappa berbasis petak (Grid / Step-by-Step).
-    /// Mengelola input diskrit, pergerakan mulus antar-node, validasi rintangan, dan interaksi tempur.
+    /// Kontroler karakter Lappa dengan Unity New Input System.
+    /// Mendukung input diskrit (1 ketuk = 1 langkah petak), pencarian tetangga cerdas,
+    /// rotasi halus, dan integrasi siklus TurnManager.
     /// </summary>
     public class LappaPlayerController : MonoBehaviour
     {
@@ -22,9 +23,6 @@ namespace LappaEscape.Player
         [Tooltip("Kecepatan berputar menghadap arah langkah")]
         public float rotateSpeed = 18.0f;
 
-        [Tooltip("Input menyesuaikan sudut pandang kamera isometrik 45 derajat")]
-        public bool useIsometricInput = true;
-
         [Header("Komponen Karakter")]
         public Animator animator;
         public CharacterController characterController;
@@ -32,10 +30,61 @@ namespace LappaEscape.Player
         [Header("Node Saat Ini")]
         public GridNode currentNode;
 
-        private bool isMoving = false;
+        [Header("Status Gerak")]
+        public bool isMoving = false;
+
+        // New Input System Action
+        private InputAction moveAction;
+        private bool wasInputHeld = false;
+
         private static readonly int IsWalkingHash = Animator.StringToHash("isWalking");
         private static readonly int AttackHash = Animator.StringToHash("Attack");
         private static readonly int DieHash = Animator.StringToHash("Die");
+
+        private void Awake()
+        {
+            SetupNewInputActions();
+        }
+
+        private void OnEnable()
+        {
+            SetupNewInputActions();
+            if (moveAction != null)
+            {
+                moveAction.Enable();
+            }
+        }
+
+        private void OnDisable()
+        {
+            if (moveAction != null)
+            {
+                moveAction.Disable();
+            }
+        }
+
+        private void SetupNewInputActions()
+        {
+            if (moveAction != null) return;
+
+            // Inisialisasi New Input System Action secara dinamis
+            moveAction = new InputAction("LappaMove", InputActionType.Value);
+
+            // Composite Dpad / 2D Vector (WASD, Arrow Keys, Gamepad)
+            moveAction.AddCompositeBinding("2DVector(mode=1)") // mode 1 = digital normalized
+                .With("Up", "<Keyboard>/w")
+                .With("Up", "<Keyboard>/upArrow")
+                .With("Down", "<Keyboard>/s")
+                .With("Down", "<Keyboard>/downArrow")
+                .With("Left", "<Keyboard>/a")
+                .With("Left", "<Keyboard>/leftArrow")
+                .With("Right", "<Keyboard>/d")
+                .With("Right", "<Keyboard>/rightArrow")
+                .With("Up", "<Gamepad>/dpad/up")
+                .With("Down", "<Gamepad>/dpad/down")
+                .With("Left", "<Gamepad>/dpad/left")
+                .With("Right", "<Gamepad>/dpad/right");
+        }
 
         private void Start()
         {
@@ -45,11 +94,9 @@ namespace LappaEscape.Player
             if (animator == null)
                 animator = GetComponentInChildren<Animator>();
 
-            // Pasang tag Player
             if (!CompareTag("Player"))
                 tag = "Player";
 
-            // Temukan node awal tempat karakter berdiri
             SnapToNearestNode();
         }
 
@@ -57,112 +104,180 @@ namespace LappaEscape.Player
         {
             if (isMoving) return;
 
-            // Cek apakah saat ini fase input pemain diizinkan
+            // Periksa apakah giliran pemain aktif
             if (TurnManager.Instance != null && !TurnManager.Instance.CanPlayerMove())
                 return;
 
-            Vector2 input = ReadDiscreteInput();
-            if (input != Vector2.zero)
+            Vector2 inputVector = ReadInput();
+
+            if (inputVector != Vector2.zero)
             {
-                Vector3 direction = CalculateMoveDirection(input);
-                if (direction != Vector3.zero)
+                if (!wasInputHeld)
                 {
-                    TryMoveInDirection(direction);
+                    wasInputHeld = true;
+                    ProcessMoveInput(inputVector);
                 }
+            }
+            else
+            {
+                wasInputHeld = false;
             }
         }
 
-        private Vector2 ReadDiscreteInput()
+        private Vector2 ReadInput()
         {
-            var keyboard = Keyboard.current;
-            if (keyboard == null) return Vector2.zero;
+            // 1. Coba baca dari New Input System moveAction
+            if (moveAction != null)
+            {
+                Vector2 val = moveAction.ReadValue<Vector2>();
+                if (val.sqrMagnitude > 0.1f) return val;
+            }
 
-            // Gunakan wasPressedThisFrame agar 1 kali tekan = tepat 1 langkah
-            if (keyboard.wKey.wasPressedThisFrame || keyboard.upArrowKey.wasPressedThisFrame) return Vector2.up;
-            if (keyboard.sKey.wasPressedThisFrame || keyboard.downArrowKey.wasPressedThisFrame) return Vector2.down;
-            if (keyboard.aKey.wasPressedThisFrame || keyboard.leftArrowKey.wasPressedThisFrame) return Vector2.left;
-            if (keyboard.dKey.wasPressedThisFrame || keyboard.rightArrowKey.wasPressedThisFrame) return Vector2.right;
+            // 2. Failsafe baca langsung dari Keyboard.current (New Input System)
+            var kb = Keyboard.current;
+            if (kb != null)
+            {
+                if (kb.wKey.isPressed || kb.upArrowKey.isPressed) return Vector2.up;
+                if (kb.sKey.isPressed || kb.downArrowKey.isPressed) return Vector2.down;
+                if (kb.aKey.isPressed || kb.leftArrowKey.isPressed) return Vector2.left;
+                if (kb.dKey.isPressed || kb.rightArrowKey.isPressed) return Vector2.right;
+            }
+
+            // 3. Failsafe Gamepad
+            var pad = Gamepad.current;
+            if (pad != null)
+            {
+                if (pad.dpad.up.isPressed) return Vector2.up;
+                if (pad.dpad.down.isPressed) return Vector2.down;
+                if (pad.dpad.left.isPressed) return Vector2.left;
+                if (pad.dpad.right.isPressed) return Vector2.right;
+            }
 
             return Vector2.zero;
         }
 
-        private Vector3 CalculateMoveDirection(Vector2 input)
+        private void ProcessMoveInput(Vector2 input)
         {
-            if (useIsometricInput)
+            Vector3 direction = CalculateWorldDirection(input);
+            if (direction == Vector3.zero) return;
+
+            TryMoveInDirection(direction);
+        }
+
+        /// <summary>
+        /// Mengubah input 2D (WASD) ke arah dunia 3D selaras dengan grid denah level.
+        /// W / Up    = +Z (maju lurus di grid)
+        /// S / Down  = -Z (mundur)
+        /// A / Left  = -X (belok kiri di grid)
+        /// D / Right = +X (belok kanan di grid)
+        /// </summary>
+        private Vector3 CalculateWorldDirection(Vector2 input)
+        {
+            // Tentukan arah dominan jika input analog/diagonal
+            if (Mathf.Abs(input.y) >= Mathf.Abs(input.x))
             {
-                // Dalam kamera isometrik 45 derajat:
-                // W: serong kanan-atas (+Z, +X)
-                // S: serong kiri-bawah (-Z, -X)
-                // A: serong kiri-atas (+Z, -X)
-                // D: serong kanan-bawah (-Z, +X)
-                if (input == Vector2.up) return (Vector3.forward + Vector3.right).normalized;
-                if (input == Vector2.down) return (Vector3.back + Vector3.left).normalized;
-                if (input == Vector2.left) return (Vector3.forward + Vector3.left).normalized;
-                if (input == Vector2.right) return (Vector3.back + Vector3.right).normalized;
+                return input.y > 0 ? Vector3.forward : Vector3.back;
             }
             else
             {
-                if (input == Vector2.up) return Vector3.forward;
-                if (input == Vector2.down) return Vector3.back;
-                if (input == Vector2.left) return Vector3.left;
-                if (input == Vector2.right) return Vector3.right;
+                return input.x > 0 ? Vector3.right : Vector3.left;
             }
-
-            return Vector3.zero;
         }
 
         private void TryMoveInDirection(Vector3 direction)
         {
-            Vector3 targetPos = transform.position + direction * tileSize;
-
-            // Cari node tujuan di GridManager
-            GridNode targetNode = null;
-            if (GridManager.Instance != null)
+            // Pastikan posisi node saat ini sudah valid
+            if (currentNode == null)
             {
-                targetNode = GridManager.Instance.GetNodeAt(targetPos, 1.4f);
+                SnapToNearestNode();
             }
 
-            // Validasi apakah perpindahan diizinkan
-            if (targetNode == null || !targetNode.isWalkable)
+            // 1. Temukan node target berdasarkan relasi tetangga atau posisi terdekat
+            GridNode targetNode = FindTargetNode(direction);
+
+            if (targetNode == null)
             {
-                // Tidak ada lantai / jalan terhalang -> cukup putar badan menghadap arah tersebut
+                // Tidak ada jalan / rute di arah tersebut -> cukup putar badan
                 StartCoroutine(RotateTowards(direction));
                 return;
             }
 
+            // 2. Validasi apakah node tujuan boleh diinjak (Walkable)
+            if (!targetNode.isWalkable)
+            {
+                // Jembatan sedang tertutup / ubin runtuh -> hanya putar badan
+                StartCoroutine(RotateTowards(direction));
+                return;
+            }
+
+            // 3. Validasi apakah jalur diblokir tembok (Blocked Path)
             if (currentNode != null && !currentNode.CanMoveTo(targetNode))
             {
-                // Jalur antar dua node diblokir tembok (Blocked Path)
                 StartCoroutine(RotateTowards(direction));
                 return;
             }
 
-            // Cek interaksi Combat dengan musuh (Demon) jika petak target ada Demon
+            // 4. Cek Interaksi Pertarungan (Combat) dengan Demon
             var demon = targetNode.GetComponentInChildren<Enemy.DemonAI>();
             if (demon != null && demon.IsAlive)
             {
-                // Evaluasi arah serangan
                 Vector3 moveDirNorm = direction.normalized;
                 Vector3 demonFaceDir = demon.FacingDirection.normalized;
 
-                // Jika berhadapan langsung (Face-to-Face): sudut hadap berlawanan (Dot ~ -1)
+                // Hitung sudut hadap (Face-to-Face vs Flank/Backstab)
                 float dot = Vector3.Dot(moveDirNorm, demonFaceDir);
-                if (dot < -0.4f)
+                if (dot < -0.35f)
                 {
-                    // Pemain masuk dari DEPAN wajah Demon -> Pemain KALAH!
+                    // Masuk dari DEPAN wajah Demon -> Pemain KALAH!
                     StartCoroutine(CombatPlayerDefeatedSequence(demon, direction));
                     return;
                 }
                 else
                 {
-                    // Pemain masuk dari SAMPING atau BELAKANG -> Demon KALAH!
+                    // Masuk dari SAMPING atau BELAKANG -> Demon KALAH!
                     StartCoroutine(CombatDemonDefeatedSequence(demon, targetNode, direction));
                     return;
                 }
             }
 
-            // Langkah normal
+            // 5. Langkah normal
             StartCoroutine(StepRoutine(targetNode, direction));
+        }
+
+        private GridNode FindTargetNode(Vector3 direction)
+        {
+            // A. Cek dari daftar tetangga langsung currentNode
+            if (currentNode != null && currentNode.neighbors.Count > 0)
+            {
+                GridNode bestNeighbor = null;
+                float bestDot = 0.35f;
+
+                foreach (var neighbor in currentNode.neighbors)
+                {
+                    if (neighbor == null) continue;
+
+                    Vector3 toNeighbor = (neighbor.WorldPosition - currentNode.WorldPosition).normalized;
+                    float dot = Vector3.Dot(direction.normalized, toNeighbor);
+
+                    if (dot > bestDot)
+                    {
+                        bestDot = dot;
+                        bestNeighbor = neighbor;
+                    }
+                }
+
+                if (bestNeighbor != null)
+                    return bestNeighbor;
+            }
+
+            // B. Fallback: Cari node berdasarkan estimasi koordinat di GridManager
+            if (GridManager.Instance != null)
+            {
+                Vector3 estimatedPos = transform.position + direction.normalized * tileSize;
+                return GridManager.Instance.GetNodeAt(estimatedPos, 1.4f);
+            }
+
+            return null;
         }
 
         private IEnumerator StepRoutine(GridNode targetNode, Vector3 direction)
@@ -177,7 +292,7 @@ namespace LappaEscape.Player
             if (characterController != null) characterController.enabled = false;
 
             Vector3 destination = targetNode.WorldPosition;
-            destination.y = transform.position.y; // Pertahankan tinggi Y permukaan lantai
+            destination.y = transform.position.y;
 
             while (Vector3.Distance(transform.position, destination) > 0.02f)
             {
@@ -192,17 +307,16 @@ namespace LappaEscape.Player
             if (characterController != null) characterController.enabled = true;
             if (animator != null) animator.SetBool(IsWalkingHash, false);
 
-            // Update posisi node saat ini
             if (currentNode != null) currentNode.currentOccupant = null;
             currentNode = targetNode;
             currentNode.currentOccupant = gameObject;
 
             isMoving = false;
 
-            // Evaluasi trigger khusus pada node
+            // Evaluasi event pada node tujuan
             EvaluateNodeEvents(currentNode);
 
-            // Kabarkan selesai melangkah ke TurnManager
+            // Beri tahu TurnManager bahwa 1 langkah selesai
             if (TurnManager.Instance != null)
             {
                 TurnManager.Instance.NotifyPlayerStepFinished(transform.position);
@@ -213,7 +327,6 @@ namespace LappaEscape.Player
         {
             if (node == null) return;
 
-            // Cek Finish Node
             if (node.nodeType == NodeType.Finish)
             {
                 if (LevelManager.Instance != null)
@@ -221,21 +334,18 @@ namespace LappaEscape.Player
                 return;
             }
 
-            // Cek Checkpoint Node
             var checkpoint = node.GetComponent<Environment.CheckpointNode>();
             if (checkpoint != null)
             {
                 checkpoint.ActivateCheckpoint();
             }
 
-            // Cek Tuas / Lever
             var lever = node.GetComponentInChildren<Environment.LeverInteractable>();
             if (lever != null)
             {
                 lever.Interact();
             }
 
-            // Cek Ubin Retak Lava
             var cracked = node.GetComponent<Environment.CrackedLavaTile>();
             if (cracked != null)
             {
@@ -262,10 +372,8 @@ namespace LappaEscape.Player
             if (TurnManager.Instance != null)
                 TurnManager.Instance.NotifyPlayerMoving();
 
-            // Putar tubuh menghadap demon
             yield return StartCoroutine(RotateTowards(direction));
 
-            // Demon menyerang pemain
             demon.Attack();
             if (animator != null) animator.SetTrigger(DieHash);
 
@@ -284,22 +392,31 @@ namespace LappaEscape.Player
             if (TurnManager.Instance != null)
                 TurnManager.Instance.NotifyPlayerMoving();
 
-            // Serang demon dari samping / belakang
             yield return StartCoroutine(RotateTowards(direction));
             if (animator != null) animator.SetTrigger(AttackHash);
 
             demon.Die();
             yield return new WaitForSeconds(0.25f);
 
-            // Melangkah masuk ke petak demon yang sudah tumbang
             yield return StartCoroutine(StepRoutine(targetNode, direction));
         }
 
         public void SnapToNearestNode()
         {
+            if (GridManager.Instance == null)
+            {
+                var gm = Object.FindAnyObjectByType<GridManager>();
+                if (gm != null) gm.ScanAllNodes();
+            }
+
             if (GridManager.Instance != null)
             {
-                currentNode = GridManager.Instance.GetNodeAt(transform.position, 2.5f);
+                currentNode = GridManager.Instance.GetNodeAt(transform.position, 3.5f);
+                if (currentNode == null)
+                {
+                    currentNode = GridManager.Instance.GetStartNode();
+                }
+
                 if (currentNode != null)
                 {
                     Vector3 pos = currentNode.WorldPosition;
