@@ -405,7 +405,7 @@ namespace LappaEscape.Player
         {
             if (GridManager.Instance == null)
             {
-                var gm = Object.FindAnyObjectByType<GridManager>();
+                var gm = UnityEngine.Object.FindAnyObjectByType<GridManager>();
                 if (gm != null) gm.ScanAllNodes();
             }
 

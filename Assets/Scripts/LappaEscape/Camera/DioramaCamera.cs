@@ -46,7 +46,7 @@ namespace LappaEscape.CameraControl
         {
             if (target == null)
             {
-                var player = Object.FindAnyObjectByType<LappaPlayerController>();
+                var player = UnityEngine.Object.FindAnyObjectByType<LappaPlayerController>();
                 if (player != null) target = player.transform;
             }
 
@@ -61,7 +61,7 @@ namespace LappaEscape.CameraControl
         {
             if (target == null)
             {
-                var player = Object.FindAnyObjectByType<LappaPlayerController>();
+                var player = UnityEngine.Object.FindAnyObjectByType<LappaPlayerController>();
                 if (player != null) target = player.transform;
                 if (target == null) return;
             }

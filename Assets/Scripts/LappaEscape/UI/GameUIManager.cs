@@ -70,7 +70,7 @@ namespace LappaEscape.UI
 
         public void OnClickRespawn()
         {
-            var player = Object.FindAnyObjectByType<LappaPlayerController>();
+            var player = UnityEngine.Object.FindAnyObjectByType<LappaPlayerController>();
             if (LevelManager.Instance != null && player != null)
             {
                 LevelManager.Instance.RespawnPlayer(player);

@@ -33,7 +33,7 @@ namespace LappaEscape.Core
         public void ScanAllNodes()
         {
             allNodes.Clear();
-            allNodes.AddRange(Object.FindObjectsByType<GridNode>(FindObjectsInactive.Include, FindObjectsSortMode.None));
+            allNodes.AddRange(UnityEngine.Object.FindObjectsByType<GridNode>(FindObjectsInactive.Include));
         }
 
         public GridNode GetNodeAt(Vector3 worldPos, float tolerance = 1.0f)

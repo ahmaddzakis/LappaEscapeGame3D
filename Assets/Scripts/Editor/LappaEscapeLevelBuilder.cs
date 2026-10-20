@@ -220,7 +220,7 @@ namespace LappaEscape.EditorTools
 
         private static void SetupLightingAndEnvironment()
         {
-            var light = Object.FindAnyObjectByType<Light>();
+            var light = UnityEngine.Object.FindAnyObjectByType<Light>();
             if (light != null)
             {
                 light.color = new Color(1.0f, 0.88f, 0.75f);
@@ -496,7 +496,7 @@ namespace LappaEscape.EditorTools
             var diorama = cam.GetComponent<DioramaCamera>();
             if (diorama == null) diorama = cam.gameObject.AddComponent<DioramaCamera>();
 
-            var player = Object.FindAnyObjectByType<LappaPlayerController>();
+            var player = UnityEngine.Object.FindAnyObjectByType<LappaPlayerController>();
             if (player != null) diorama.target = player.transform;
 
             diorama.distance = 18f;

@@ -37,7 +37,7 @@ namespace LappaEscape.Environment
             // Jika linkedBridges kosong, cari otomatis di scene yang warnanya cocok
             if (leverType == LeverType.ColorBridgeToggle && linkedBridges.Count == 0)
             {
-                var allBridges = Object.FindObjectsByType<BridgeController>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+                var allBridges = UnityEngine.Object.FindObjectsByType<BridgeController>(FindObjectsInactive.Include);
                 foreach (var b in allBridges)
                 {
                     if (b.bridgeColor == targetColor)
